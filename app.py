@@ -29,7 +29,7 @@ import streamlit as st
 import db
 
 DEFAULT_TIMEOUT_MINUTES = 30
-TEAM_MEMBERS = ["Ayma", "Kostas", "Team Member A", "Team Member B"]
+TEAM_MEMBERS = ["Ayma", "Kostas", "Elina", "Mikko"]
 
 # One color per stage so the board reads at a glance. Red and orange are
 # reserved for OVERDUE and auto-reassigned respectively (below), so they're
@@ -148,34 +148,31 @@ with tab_board:
                     delivered_caption += f"\nby {row['delivered_by']}"
                 ts_cols[4].caption(delivered_caption)
 
-                action_cols = st.columns(4)
-
-                with action_cols[0]:
-                    if row["stage"] == db.STAGE_RECEIVED:
-                        if st.button("Pick Up", key=f"pickup_btn_{row['id']}"):
-                            db.pick_up(row["id"])
+                # A single full-width button whose action depends on the current stage,
+                # rather than 4 side-by-side columns (only one is ever relevant at a
+                # time anyway). Cuts clutter and lays out far better on a phone screen,
+                # where 4 cramped columns would otherwise be nearly unreadable.
+                if row["stage"] == db.STAGE_RECEIVED:
+                    if st.button("Pick Up", key=f"pickup_btn_{row['id']}", use_container_width=True):
+                        db.pick_up(row["id"])
+                        st.rerun()
+                elif row["stage"] == db.STAGE_PICKED_UP:
+                    if st.button("Start Preparation", key=f"prep_btn_{row['id']}", use_container_width=True):
+                        db.start_prep(row["id"])
+                        st.rerun()
+                elif row["stage"] == db.STAGE_IN_PREPARATION:
+                    if st.button("Approve", key=f"approve_btn_{row['id']}", use_container_width=True):
+                        db.approve(row["id"])
+                        st.rerun()
+                elif row["stage"] == db.STAGE_APPROVED:
+                    if acting_as == row["owner"]:
+                        if st.button(
+                            "Mark Delivered", key=f"deliver_btn_{row['id']}", type="primary", use_container_width=True
+                        ):
+                            db.mark_delivered(row["id"], acting_as)
                             st.rerun()
-
-                with action_cols[1]:
-                    if row["stage"] == db.STAGE_PICKED_UP:
-                        if st.button("Start Preparation", key=f"prep_btn_{row['id']}"):
-                            db.start_prep(row["id"])
-                            st.rerun()
-
-                with action_cols[2]:
-                    if row["stage"] == db.STAGE_IN_PREPARATION:
-                        if st.button("Approve", key=f"approve_btn_{row['id']}"):
-                            db.approve(row["id"])
-                            st.rerun()
-
-                with action_cols[3]:
-                    if row["stage"] == db.STAGE_APPROVED:
-                        if acting_as == row["owner"]:
-                            if st.button("Mark Delivered", key=f"deliver_btn_{row['id']}", type="primary"):
-                                db.mark_delivered(row["id"], acting_as)
-                                st.rerun()
-                        else:
-                            st.caption(f"Only **{row['owner']}** (the preparer) can confirm delivery.")
+                    else:
+                        st.caption(f"Only **{row['owner']}** (the preparer) can confirm delivery.")
 
                 if row["reassigned_count"]:
                     st.caption(f"Auto-reassigned {row['reassigned_count']} time(s) due to timeout.")
@@ -204,7 +201,7 @@ with tab_notify:
 
 # --- Readout tab ---
 with tab_metrics:
-    st.subheader("Wait time vs prep time")
+    st.subheader("Processing time: waiting vs. preparation")
     rows = db.fetch_all()
     df = pd.DataFrame(rows)
 
@@ -217,9 +214,14 @@ with tab_metrics:
         # every NaN back to None first so the checks behave correctly.
         df = df.astype(object).where(df.notnull(), None)
 
+        # Total = the whole pipeline, start to finish.
         # Wait = time sitting before anyone picks it up.
         # Prep = time actually being worked, from pickup through delivery
         # (covers preparation and approval together).
+        df["total_minutes"] = df.apply(
+            lambda r: db.minutes_between(r["received_at"], r["delivered_at"]),
+            axis=1,
+        )
         df["wait_minutes"] = df.apply(
             lambda r: db.minutes_between(r["received_at"], r["picked_up_at"]),
             axis=1,
@@ -231,20 +233,33 @@ with tab_metrics:
 
         delivered = df[df["stage"] == db.STAGE_DELIVERED]
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         col1.metric("Total requests", len(df))
-        col2.metric(
-            "Median wait time (min)",
-            round(delivered["wait_minutes"].median(), 1) if not delivered.empty else "-",
-        )
-        col3.metric(
-            "Median prep time (min)",
-            round(delivered["prep_minutes"].median(), 1) if not delivered.empty else "-",
-        )
+        col2.metric("Delivered (used for the medians below)", len(delivered))
 
-        st.caption("Wait = time from received to picked up. Prep = time from picked up to delivered (covers preparation and approval).")
+        if delivered.empty:
+            st.info("No delivered requests yet - the medians need at least one request to go all the way through.")
+        else:
+            median_total = delivered["total_minutes"].median()
+            median_wait = delivered["wait_minutes"].median()
+            median_prep = delivered["prep_minutes"].median()
+
+            col3, col4, col5 = st.columns(3)
+            col3.metric("Median processing time (min)", round(median_total, 1))
+            wait_pct = (median_wait / median_total * 100) if median_total else 0
+            prep_pct = (median_prep / median_total * 100) if median_total else 0
+            col4.metric("Waiting", f"{round(wait_pct)}%", help=f"Median wait: {round(median_wait, 1)} min")
+            col5.metric("Preparation", f"{round(prep_pct)}%", help=f"Median prep: {round(median_prep, 1)} min")
+
+            st.caption(
+                "Processing time = received to delivered. Waiting = received to picked up. "
+                "Preparation = picked up to delivered (covers preparation and approval). "
+                "Waiting % and Preparation % are each stage's median minutes as a share of the median processing time."
+            )
+
         st.dataframe(
-            df[["id", "document_type", "stage", "owner", "wait_minutes", "prep_minutes", "reassigned_count"]],
+            df[["id", "document_type", "stage", "owner", "total_minutes", "wait_minutes", "prep_minutes", "reassigned_count"]],
             use_container_width=True,
             hide_index=True,
         )
+        st.caption("This table has every request's own numbers (not just medians), so you can check the math by hand.")
