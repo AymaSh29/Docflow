@@ -50,10 +50,11 @@ row1 = db.fetch_one(req1_id, TEST_DB)
 check("Request 1 moves to Approved", row1["stage"] == db.STAGE_APPROVED)
 check("Request 1 has an approved_at timestamp", row1["approved_at"] is not None)
 
-db.mark_delivered(req1_id, TEST_DB)
+db.mark_delivered(req1_id, "Ayma", TEST_DB)
 row1 = db.fetch_one(req1_id, TEST_DB)
 check("Request 1 moves to Delivered", row1["stage"] == db.STAGE_DELIVERED)
 check("Request 1 has a delivered_at timestamp", row1["delivered_at"] is not None)
+check("Request 1 records who confirmed delivery", row1["delivered_by"] == "Ayma")
 
 # --- Request 2: sits unpicked past timeout -> auto-reassigned + both notified ---
 req2_id = db.insert_request("Kostas", "Invoice", "Q3 invoice batch", "Team Member A", 30, TEST_DB)
