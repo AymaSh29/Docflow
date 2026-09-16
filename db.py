@@ -177,7 +177,13 @@ def mark_delivered(req_id, confirmed_by, db_path=DB_PATH):
     only letting this be called when confirmed_by is the request's current
     owner - delivery must be confirmed by the preparer, not just anyone
     looking at the board.
+
+    The client (whoever's name was entered as requester_name at submission)
+    gets a notification in the same in-app feed used for reassignments, so
+    they have a way to find out it's done without a separate channel.
     """
+    row = fetch_one(req_id, db_path)
+
     conn = get_conn(db_path)
     conn.execute(
         "UPDATE requests SET delivered_at = ?, stage = ?, delivered_by = ? WHERE id = ?",
@@ -185,6 +191,14 @@ def mark_delivered(req_id, confirmed_by, db_path=DB_PATH):
     )
     conn.commit()
     conn.close()
+
+    if row:
+        create_notification(
+            req_id,
+            row["requester_name"],
+            f"Your {row['document_type']} request (#{req_id}) has been delivered by {confirmed_by}.",
+            db_path,
+        )
 
 
 def reassign(req_id, new_owner, db_path=DB_PATH):
