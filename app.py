@@ -84,11 +84,12 @@ with tab_board:
                     else:
                         st.write(f"**{row['status']}**")
 
+                empty = "not yet"
                 ts_col1, ts_col2, ts_col3, ts_col4 = st.columns(4)
-                ts_col1.caption(f"Submitted\n\n{row['submitted_at'] or '-'}")
-                ts_col2.caption(f"Assigned to {row['assigned_to'] or '-'}\n\n{row['assigned_at'] or '-'}")
-                ts_col3.caption(f"Prep started\n\n{row['prep_started_at'] or '-'}")
-                ts_col4.caption(f"Delivered\n\n{row['delivered_at'] or '-'}")
+                ts_col1.caption(f"Submitted\n\n{row['submitted_at'] or empty}")
+                ts_col2.caption(f"Assigned to {row['assigned_to'] or 'nobody yet'}\n\n{row['assigned_at'] or empty}")
+                ts_col3.caption(f"Prep started\n\n{row['prep_started_at'] or empty}")
+                ts_col4.caption(f"Delivered\n\n{row['delivered_at'] or empty}")
 
                 action_col1, action_col2, action_col3 = st.columns(3)
 
