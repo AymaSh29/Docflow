@@ -167,9 +167,17 @@ with tab_board:
 # --- Notifications tab ---
 with tab_notify:
     st.subheader("In-app notifications")
-    st.caption("Both the original owner and their backup get a notification here when an auto-reassignment happens.")
+    st.caption(
+        "Both the original owner and their backup get notified here on an auto-reassignment. "
+        "The client (whoever submitted the request) gets notified here too once it's delivered."
+    )
 
-    view_as = st.selectbox("View notifications for", ["Everyone"] + TEAM_MEMBERS)
+    # Recipients include team members AND clients (whoever typed their name in as
+    # requester_name at submission), since clients now get delivery notifications too.
+    # Built from actual notification history rather than a fixed list, so any
+    # client name that's ever received one shows up as selectable.
+    known_recipients = sorted({n["recipient"] for n in db.fetch_notifications()})
+    view_as = st.selectbox("View notifications for", ["Everyone"] + known_recipients)
     notifications = db.fetch_notifications(recipient=None if view_as == "Everyone" else view_as)
 
     if not notifications:
