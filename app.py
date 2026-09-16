@@ -36,6 +36,14 @@ db.init_db()
 
 auto_reassigned = db.auto_reassign_overdue()
 
+# Lightweight identity: this app has no real login, so we simulate "who's
+# using it right now" with a sidebar picker. This is what lets delivery
+# confirmation be restricted to the actual preparer instead of anyone
+# clicking the button - a real deployment would replace this with actual
+# auth (SSO, etc), but the gating logic below doesn't change either way.
+st.sidebar.subheader("Acting as")
+acting_as = st.sidebar.selectbox("You are", TEAM_MEMBERS, key="acting_as", label_visibility="collapsed")
+
 st.title("DocFlow - Document Request Tracker")
 
 if auto_reassigned:
@@ -119,7 +127,10 @@ with tab_board:
                 ts_cols[1].caption(f"Picked up\n\n{row['picked_up_at'] or empty}")
                 ts_cols[2].caption(f"In preparation\n\n{row['prep_started_at'] or empty}")
                 ts_cols[3].caption(f"Approved\n\n{row['approved_at'] or empty}")
-                ts_cols[4].caption(f"Delivered\n\n{row['delivered_at'] or empty}")
+                delivered_caption = f"Delivered\n\n{row['delivered_at'] or empty}"
+                if row["delivered_at"] and row.get("delivered_by"):
+                    delivered_caption += f"\nby {row['delivered_by']}"
+                ts_cols[4].caption(delivered_caption)
 
                 action_cols = st.columns(4)
 
@@ -143,9 +154,12 @@ with tab_board:
 
                 with action_cols[3]:
                     if row["stage"] == db.STAGE_APPROVED:
-                        if st.button("Mark Delivered", key=f"deliver_btn_{row['id']}", type="primary"):
-                            db.mark_delivered(row["id"])
-                            st.rerun()
+                        if acting_as == row["owner"]:
+                            if st.button("Mark Delivered", key=f"deliver_btn_{row['id']}", type="primary"):
+                                db.mark_delivered(row["id"], acting_as)
+                                st.rerun()
+                        else:
+                            st.caption(f"Only **{row['owner']}** (the preparer) can confirm delivery.")
 
                 if row["reassigned_count"]:
                     st.caption(f"Auto-reassigned {row['reassigned_count']} time(s) due to timeout.")
