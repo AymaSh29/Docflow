@@ -39,6 +39,13 @@ def get_conn(db_path=DB_PATH):
     return conn
 
 
+def _ensure_column(conn, table, column, definition):
+    """Add a column if it's missing, without touching existing rows/data."""
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db(db_path=DB_PATH):
     conn = get_conn(db_path)
 
@@ -47,8 +54,9 @@ def init_db(db_path=DB_PATH):
     # it untouched and every row read afterward would be missing the new
     # columns (stage, owner, received_at, ...), causing a KeyError. Detect an
     # old/incompatible schema and rebuild the table instead of silently
-    # reading stale structure. This is a prototype, so we drop rather than
-    # migrate column-by-column - fine here since test data is disposable.
+    # reading stale structure. This only applies to that one historical case -
+    # newer, smaller additions (like delivered_by below) use _ensure_column
+    # instead, which adds a column in place and keeps existing data.
     existing_cols = {r["name"] for r in conn.execute("PRAGMA table_info(requests)").fetchall()}
     if existing_cols and "stage" not in existing_cols:
         conn.execute("DROP TABLE requests")
@@ -68,11 +76,13 @@ def init_db(db_path=DB_PATH):
             prep_started_at TEXT,
             approved_at TEXT,
             delivered_at TEXT,
+            delivered_by TEXT,
             timeout_minutes INTEGER NOT NULL DEFAULT 30,
             reassigned_count INTEGER NOT NULL DEFAULT 0
         )
         """
     )
+    _ensure_column(conn, "requests", "delivered_by", "TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS notifications (
@@ -159,12 +169,19 @@ def approve(req_id, db_path=DB_PATH):
     conn.close()
 
 
-def mark_delivered(req_id, db_path=DB_PATH):
-    """Approved -> Delivered: one-click delivery confirmation."""
+def mark_delivered(req_id, confirmed_by, db_path=DB_PATH):
+    """
+    Approved -> Delivered: one-click delivery confirmation.
+
+    confirmed_by is who clicked it. The caller (app.py) is responsible for
+    only letting this be called when confirmed_by is the request's current
+    owner - delivery must be confirmed by the preparer, not just anyone
+    looking at the board.
+    """
     conn = get_conn(db_path)
     conn.execute(
-        "UPDATE requests SET delivered_at = ?, stage = ? WHERE id = ?",
-        (now_iso(), STAGE_DELIVERED, req_id),
+        "UPDATE requests SET delivered_at = ?, stage = ?, delivered_by = ? WHERE id = ?",
+        (now_iso(), STAGE_DELIVERED, confirmed_by, req_id),
     )
     conn.commit()
     conn.close()
