@@ -130,6 +130,12 @@ with tab_metrics:
     if df.empty:
         st.info("No data yet.")
     else:
+        # Pandas can silently store an empty timestamp column as NaN (float) instead of
+        # Python's None. Unlike None, NaN is truthy, so the "or" fallbacks below would
+        # treat a missing timestamp as present and crash trying to parse it. Normalize
+        # every NaN back to None first so the falsy checks behave correctly.
+        df = df.astype(object).where(df.notnull(), None)
+
         df["wait_minutes"] = df.apply(
             lambda r: db.minutes_between(
                 r["submitted_at"], r["prep_started_at"] or r["delivered_at"]
