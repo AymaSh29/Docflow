@@ -31,6 +31,19 @@ def get_conn(db_path=DB_PATH):
 
 def init_db(db_path=DB_PATH):
     conn = get_conn(db_path)
+
+    # If a requests table already exists from an earlier version of this app
+    # (e.g. the old 4-stage schema), "CREATE TABLE IF NOT EXISTS" would leave
+    # it untouched and every row read afterward would be missing the new
+    # columns (stage, owner, received_at, ...), causing a KeyError. Detect an
+    # old/incompatible schema and rebuild the table instead of silently
+    # reading stale structure. This is a prototype, so we drop rather than
+    # migrate column-by-column - fine here since test data is disposable.
+    existing_cols = {r["name"] for r in conn.execute("PRAGMA table_info(requests)").fetchall()}
+    if existing_cols and "stage" not in existing_cols:
+        conn.execute("DROP TABLE requests")
+        existing_cols = set()
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS requests (
