@@ -127,11 +127,15 @@ with tab_board:
                 with stage_col:
                     if overdue:
                         st.error("OVERDUE")
-                    elif was_reassigned:
-                        st.warning(f"\U0001F501 {row['stage']}")
                     else:
+                        # The stage badge always reflects the CURRENT stage's own color,
+                        # regardless of reassignment history - a delivered ticket looks
+                        # the same as any other delivered ticket. The reassignment itself
+                        # is still permanently visible via the orange owner name and the
+                        # "Auto-reassigned from X" line above, so that history isn't lost.
                         color = STAGE_COLORS.get(row["stage"], "gray")
-                        st.markdown(f":{color}[**{row['stage']}**]")
+                        prefix = "\U0001F501 " if was_reassigned else ""
+                        st.markdown(f":{color}[**{prefix}{row['stage']}**]")
 
                 empty = "not yet"
                 ts_cols = st.columns(5)
