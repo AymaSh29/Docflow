@@ -92,6 +92,27 @@ check(
     len(db.fetch_notifications(TEST_DB, recipient="Team Member B")) == 1,
 )
 
+# Even if the BACKUP also lets it sit past the timeout, it must not bounce
+# back to the original owner - one automatic handoff only, per request.
+conn = sqlite3.connect(TEST_DB)
+long_past = (datetime.now() - timedelta(minutes=45)).isoformat(timespec="seconds")
+conn.execute("UPDATE requests SET received_at = ? WHERE id = ?", (long_past, req2_id))
+conn.commit()
+conn.close()
+
+row2 = db.fetch_one(req2_id, TEST_DB)
+check("Request 2 (now with backup as owner) is overdue again", db.is_overdue(row2))
+
+reassigned_third_check = db.auto_reassign_overdue(TEST_DB)
+row2 = db.fetch_one(req2_id, TEST_DB)
+check("No ping-pong: request 2 does NOT bounce back to Team Member A", row2["owner"] == "Team Member B")
+check("No ping-pong: reassigned_count stays at 1", row2["reassigned_count"] == 1)
+check("No ping-pong: request 2 not reported as reassigned again", not any(r["id"] == req2_id for r in reassigned_third_check))
+check(
+    "No ping-pong: Team Member A doesn't get a second notification",
+    len(db.fetch_notifications(TEST_DB, recipient="Team Member A")) == 1,
+)
+
 # --- insert_request requires an owner ---
 try:
     db.insert_request("Sampo", "Report", "Monthly lab report", "", 30, TEST_DB)
