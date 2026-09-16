@@ -28,8 +28,8 @@ STAGE_ORDER = [STAGE_RECEIVED, STAGE_PICKED_UP, STAGE_IN_PREPARATION, STAGE_APPR
 BACKUP_OF = {
     "Ayma": "Kostas",
     "Kostas": "Ayma",
-    "Team Member A": "Team Member B",
-    "Team Member B": "Team Member A",
+    "Elina": "Mikko",
+    "Mikko": "Elina",
 }
 
 
