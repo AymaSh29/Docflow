@@ -1,0 +1,100 @@
+"""
+Verifies the Readout tab's median math against a hand calculation, using a
+known, controlled set of timestamps (not real elapsed time), the same way
+Kostas's acceptance criterion #3 will check it: create requests, work out
+the medians by hand, and confirm the app agrees.
+
+This mirrors the exact computation app.py's Readout tab does (same pandas
+calls, same NaN-normalization step), so it isn't testing different logic -
+it's a way to check that logic here since Streamlit itself can't run in
+this sandbox.
+
+Run: python3 test_readout.py
+"""
+
+import os
+import sqlite3
+from datetime import datetime, timedelta
+
+import pandas as pd
+
+import db
+
+TEST_DB = "test_readout.db"
+if os.path.exists(TEST_DB):
+    os.remove(TEST_DB)
+db.init_db(TEST_DB)
+
+
+def check(label, condition):
+    status = "PASS" if condition else "FAIL"
+    print(f"[{status}] {label}")
+    assert condition, f"Failed: {label}"
+
+
+BASE = datetime(2026, 1, 1, 9, 0, 0)
+
+
+def iso(minutes_offset):
+    return (BASE + timedelta(minutes=minutes_offset)).isoformat(timespec="seconds")
+
+
+# Three requests with hand-picked timestamps (minutes since a fixed base time):
+#   Request   received  picked_up  delivered   wait   prep   total
+#   A              0        10        40         10     30      40
+#   B              0         5        25          5     20      25
+#   C              0        20        50         20     30      50
+#
+# Hand calculation:
+#   sorted totals = [25, 40, 50] -> median total = 40
+#   sorted waits  = [5, 10, 20]  -> median wait  = 10
+#   sorted preps  = [20, 30, 30] -> median prep  = 30
+#   wait % of total  = 10/40 * 100 = 25%
+#   prep % of total  = 30/40 * 100 = 75%
+plan = [
+    ("A", 0, 10, 40),
+    ("B", 0, 5, 25),
+    ("C", 0, 20, 50),
+]
+
+req_ids = [db.insert_request(f"Client {label}", "NDA", "", "Ayma", 30, TEST_DB) for label, *_ in plan]
+
+conn = sqlite3.connect(TEST_DB)
+for (label, received_off, picked_off, delivered_off), req_id in zip(plan, req_ids):
+    conn.execute(
+        """
+        UPDATE requests
+        SET received_at = ?, picked_up_at = ?, delivered_at = ?, stage = ?
+        WHERE id = ?
+        """,
+        (iso(received_off), iso(picked_off), iso(delivered_off), db.STAGE_DELIVERED, req_id),
+    )
+conn.commit()
+conn.close()
+
+# --- Replicate app.py's exact Readout computation ---
+rows = db.fetch_all(TEST_DB)
+df = pd.DataFrame(rows)
+df = df.astype(object).where(df.notnull(), None)
+
+df["total_minutes"] = df.apply(lambda r: db.minutes_between(r["received_at"], r["delivered_at"]), axis=1)
+df["wait_minutes"] = df.apply(lambda r: db.minutes_between(r["received_at"], r["picked_up_at"]), axis=1)
+df["prep_minutes"] = df.apply(lambda r: db.minutes_between(r["picked_up_at"], r["delivered_at"]), axis=1)
+
+delivered = df[df["stage"] == db.STAGE_DELIVERED]
+
+median_total = delivered["total_minutes"].median()
+median_wait = delivered["wait_minutes"].median()
+median_prep = delivered["prep_minutes"].median()
+wait_pct = median_wait / median_total * 100
+prep_pct = median_prep / median_total * 100
+
+check("3 requests loaded", len(delivered) == 3)
+check(f"Median total = 40 (got {median_total})", median_total == 40)
+check(f"Median wait = 10 (got {median_wait})", median_wait == 10)
+check(f"Median prep = 30 (got {median_prep})", median_prep == 30)
+check(f"Waiting % = 25% (got {round(wait_pct)}%)", round(wait_pct) == 25)
+check(f"Preparation % = 75% (got {round(prep_pct)}%)", round(prep_pct) == 75)
+
+os.remove(TEST_DB)
+print("\nAll checks passed - readout math matches the hand calculation.")
