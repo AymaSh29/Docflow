@@ -7,12 +7,20 @@ shared status board, each with its own timestamp:
 
     Received -> Picked Up -> In Preparation -> Approved -> Delivered
 
-Also covers: reassigning a request that's sat too long waiting to be picked
-up (configurable timeout), one-click delivery confirmation, and a median
-wait-time vs. prep-time readout.
+Also covers: automatically reassigning a request that's sat too long waiting
+to be picked up (configurable timeout) to the owner's named backup, with
+both people notified in the app, one-click delivery confirmation, and a
+median wait-time vs. prep-time readout.
 
 Storage: local SQLite file (docflow.db), shared by everyone hitting this app.
 Data layer lives in db.py so it can be tested without Streamlit installed.
+
+Note on "automatic": a Streamlit app only runs code when someone loads or
+interacts with it, there's no background process ticking while it's idle.
+So the overdue check below runs at the top of every page load/interaction,
+which means: the moment anyone opens the app after a request has timed out,
+the reassignment and notifications already happened before they see the
+board, with no manual "reassign" click needed by anyone.
 """
 
 import pandas as pd
@@ -26,9 +34,20 @@ TEAM_MEMBERS = ["Ayma", "Kostas", "Team Member A", "Team Member B"]
 st.set_page_config(page_title="DocFlow", page_icon="\U0001F4C4", layout="wide")
 db.init_db()
 
+auto_reassigned = db.auto_reassign_overdue()
+
 st.title("DocFlow - Document Request Tracker")
 
-tab_submit, tab_board, tab_metrics = st.tabs(["Submit Request", "Status Board", "Readout"])
+if auto_reassigned:
+    for item in auto_reassigned:
+        st.warning(
+            f"Request #{item['id']} timed out and was automatically reassigned "
+            f"from {item['from']} to their backup, {item['to']}. Both were notified."
+        )
+
+tab_submit, tab_board, tab_notify, tab_metrics = st.tabs(
+    ["Submit Request", "Status Board", "Notifications", "Readout"]
+)
 
 # --- Submit tab ---
 with tab_submit:
@@ -95,46 +114,51 @@ with tab_board:
                 ts_cols[3].caption(f"Approved\n\n{row['approved_at'] or empty}")
                 ts_cols[4].caption(f"Delivered\n\n{row['delivered_at'] or empty}")
 
-                action_cols = st.columns(5)
+                action_cols = st.columns(4)
 
                 with action_cols[0]:
-                    if row["stage"] == db.STAGE_RECEIVED:
-                        new_owner = st.selectbox(
-                            "Reassign to",
-                            [m for m in TEAM_MEMBERS if m != row["owner"]],
-                            key=f"reassign_{row['id']}",
-                            label_visibility="collapsed",
-                        )
-                        if st.button("Reassign", key=f"reassign_btn_{row['id']}"):
-                            db.reassign(row["id"], new_owner)
-                            st.rerun()
-
-                with action_cols[1]:
                     if row["stage"] == db.STAGE_RECEIVED:
                         if st.button("Pick Up", key=f"pickup_btn_{row['id']}"):
                             db.pick_up(row["id"])
                             st.rerun()
 
-                with action_cols[2]:
+                with action_cols[1]:
                     if row["stage"] == db.STAGE_PICKED_UP:
                         if st.button("Start Preparation", key=f"prep_btn_{row['id']}"):
                             db.start_prep(row["id"])
                             st.rerun()
 
-                with action_cols[3]:
+                with action_cols[2]:
                     if row["stage"] == db.STAGE_IN_PREPARATION:
                         if st.button("Approve", key=f"approve_btn_{row['id']}"):
                             db.approve(row["id"])
                             st.rerun()
 
-                with action_cols[4]:
+                with action_cols[3]:
                     if row["stage"] == db.STAGE_APPROVED:
                         if st.button("Mark Delivered", key=f"deliver_btn_{row['id']}", type="primary"):
                             db.mark_delivered(row["id"])
                             st.rerun()
 
                 if row["reassigned_count"]:
-                    st.caption(f"Reassigned {row['reassigned_count']} time(s)")
+                    st.caption(
+                        f"Auto-reassigned {row['reassigned_count']} time(s) due to timeout "
+                        f"(backup for each owner: {db.BACKUP_OF.get(row['owner'], 'none configured')})"
+                    )
+
+# --- Notifications tab ---
+with tab_notify:
+    st.subheader("In-app notifications")
+    st.caption("Both the original owner and their backup get a notification here when an auto-reassignment happens.")
+
+    view_as = st.selectbox("View notifications for", ["Everyone"] + TEAM_MEMBERS)
+    notifications = db.fetch_notifications(recipient=None if view_as == "Everyone" else view_as)
+
+    if not notifications:
+        st.info("No notifications yet. They show up here automatically when a request times out and gets reassigned.")
+    else:
+        for note in notifications:
+            st.info(f"**{note['recipient']}** - {note['message']}\n\n{note['created_at']}")
 
 # --- Readout tab ---
 with tab_metrics:
