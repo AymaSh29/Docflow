@@ -31,6 +31,17 @@ import db
 DEFAULT_TIMEOUT_MINUTES = 30
 TEAM_MEMBERS = ["Ayma", "Kostas", "Team Member A", "Team Member B"]
 
+# One color per stage so the board reads at a glance. Red and orange are
+# reserved for OVERDUE and auto-reassigned respectively (below), so they're
+# left out here to avoid the same color meaning two different things.
+STAGE_COLORS = {
+    db.STAGE_RECEIVED: "gray",
+    db.STAGE_PICKED_UP: "blue",
+    db.STAGE_IN_PREPARATION: "yellow",
+    db.STAGE_APPROVED: "violet",
+    db.STAGE_DELIVERED: "green",
+}
+
 st.set_page_config(page_title="DocFlow", page_icon="\U0001F4C4", layout="wide")
 db.init_db()
 
@@ -119,7 +130,8 @@ with tab_board:
                     elif was_reassigned:
                         st.warning(f"\U0001F501 {row['stage']}")
                     else:
-                        st.write(f"**{row['stage']}**")
+                        color = STAGE_COLORS.get(row["stage"], "gray")
+                        st.markdown(f":{color}[**{row['stage']}**]")
 
                 empty = "not yet"
                 ts_cols = st.columns(5)
