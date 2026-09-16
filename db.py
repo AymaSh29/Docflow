@@ -22,6 +22,16 @@ STAGE_DELIVERED = "Delivered"
 
 STAGE_ORDER = [STAGE_RECEIVED, STAGE_PICKED_UP, STAGE_IN_PREPARATION, STAGE_APPROVED, STAGE_DELIVERED]
 
+# Fixed backup pairing: if an owner doesn't act in time, their request goes
+# to this named person. Kept simple (a fixed pairing) for the prototype -
+# a real version would probably let each person configure their own backup.
+BACKUP_OF = {
+    "Ayma": "Kostas",
+    "Kostas": "Ayma",
+    "Team Member A": "Team Member B",
+    "Team Member B": "Team Member A",
+}
+
 
 def get_conn(db_path=DB_PATH):
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -60,6 +70,17 @@ def init_db(db_path=DB_PATH):
             delivered_at TEXT,
             timeout_minutes INTEGER NOT NULL DEFAULT 30,
             reassigned_count INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id INTEGER NOT NULL,
+            recipient TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
         """
     )
@@ -185,3 +206,69 @@ def is_overdue(row, reference_time=None):
     ref = reference_time or now_iso()
     elapsed = minutes_between(row["received_at"], ref)
     return elapsed is not None and elapsed > row["timeout_minutes"]
+
+
+def create_notification(request_id, recipient, message, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO notifications (request_id, recipient, message, created_at) VALUES (?, ?, ?, ?)",
+        (request_id, recipient, message, now_iso()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def fetch_notifications(db_path=DB_PATH, recipient=None):
+    conn = get_conn(db_path)
+    if recipient:
+        rows = conn.execute(
+            "SELECT * FROM notifications WHERE recipient = ? ORDER BY id DESC", (recipient,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM notifications ORDER BY id DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def auto_reassign_overdue(db_path=DB_PATH):
+    """
+    Check every request still waiting to be picked up. Any that have sat
+    past their timeout get automatically reassigned to their owner's named
+    backup, and both the original owner and the backup get a notification
+    logged in the app.
+
+    Called on every app load/interaction (see app.py) rather than on a true
+    background timer, since a Streamlit app has no process running when
+    nobody has it open. For this prototype that means: the moment anyone
+    hits the app after the timeout has passed, the reassignment has already
+    happened before they see the board.
+    """
+    reassigned = []
+    for row in fetch_all(db_path):
+        if row["stage"] != STAGE_RECEIVED or not is_overdue(row):
+            continue
+
+        old_owner = row["owner"]
+        backup = BACKUP_OF.get(old_owner)
+        if not backup or backup == old_owner:
+            continue  # no backup configured for this person - leave it flagged, don't loop
+
+        reassign(row["id"], backup, db_path)
+
+        create_notification(
+            row["id"],
+            old_owner,
+            f"Request #{row['id']} ({row['document_type']}) timed out waiting on you "
+            f"and was automatically reassigned to {backup}.",
+            db_path,
+        )
+        create_notification(
+            row["id"],
+            backup,
+            f"Request #{row['id']} ({row['document_type']}) was automatically reassigned "
+            f"to you as backup for {old_owner} because it timed out.",
+            db_path,
+        )
+        reassigned.append({"id": row["id"], "from": old_owner, "to": backup})
+
+    return reassigned
