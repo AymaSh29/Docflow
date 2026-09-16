@@ -56,6 +56,9 @@ check("Request 1 moves to Delivered", row1["stage"] == db.STAGE_DELIVERED)
 check("Request 1 has a delivered_at timestamp", row1["delivered_at"] is not None)
 check("Request 1 records who confirmed delivery", row1["delivered_by"] == "Ayma")
 
+client_notes = db.fetch_notifications(TEST_DB, recipient="Ayma")  # requester_name was also "Ayma" here
+check("Client (requester) gets a delivery notification", any(f"#{req1_id}" in n["message"] for n in client_notes))
+
 # --- Request 2: sits unpicked past timeout -> auto-reassigned + both notified ---
 req2_id = db.insert_request("Kostas", "Invoice", "Q3 invoice batch", "Team Member A", 30, TEST_DB)
 
