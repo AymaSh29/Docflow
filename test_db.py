@@ -60,7 +60,7 @@ client_notes = db.fetch_notifications(TEST_DB, recipient="Ayma")  # requester_na
 check("Client (requester) gets a delivery notification", any(f"#{req1_id}" in n["message"] for n in client_notes))
 
 # --- Request 2: sits unpicked past timeout -> auto-reassigned + both notified ---
-req2_id = db.insert_request("Kostas", "Invoice", "Q3 invoice batch", "Team Member A", 30, TEST_DB)
+req2_id = db.insert_request("Kostas", "Invoice", "Q3 invoice batch", "Elina", 30, TEST_DB)
 
 conn = sqlite3.connect(TEST_DB)
 past = (datetime.now() - timedelta(minutes=45)).isoformat(timespec="seconds")
@@ -70,21 +70,21 @@ conn.close()
 
 row2 = db.fetch_one(req2_id, TEST_DB)
 check("Request 2 (45 min old, 30 min timeout) is flagged overdue", db.is_overdue(row2))
-check("Team Member A's backup is Team Member B", db.BACKUP_OF["Team Member A"] == "Team Member B")
+check("Elina's backup is Mikko", db.BACKUP_OF["Elina"] == "Mikko")
 
 reassigned = db.auto_reassign_overdue(TEST_DB)
 check("auto_reassign_overdue reports request 2 as reassigned", any(r["id"] == req2_id for r in reassigned))
 
 row2 = db.fetch_one(req2_id, TEST_DB)
-check("Request 2 auto-reassigned to its named backup (Team Member B)", row2["owner"] == "Team Member B")
+check("Request 2 auto-reassigned to its named backup (Mikko)", row2["owner"] == "Mikko")
 check("Request 2 reassigned_count incremented", row2["reassigned_count"] == 1)
 check("Request 2 no longer overdue right after reassignment", not db.is_overdue(row2))
 check("Request 2 still at Received after reassignment", row2["stage"] == db.STAGE_RECEIVED)
 
-notes_for_old_owner = db.fetch_notifications(TEST_DB, recipient="Team Member A")
-notes_for_backup = db.fetch_notifications(TEST_DB, recipient="Team Member B")
-check("Original owner (Team Member A) got a notification", len(notes_for_old_owner) == 1)
-check("Backup (Team Member B) got a notification", len(notes_for_backup) == 1)
+notes_for_old_owner = db.fetch_notifications(TEST_DB, recipient="Elina")
+notes_for_backup = db.fetch_notifications(TEST_DB, recipient="Mikko")
+check("Original owner (Elina) got a notification", len(notes_for_old_owner) == 1)
+check("Backup (Mikko) got a notification", len(notes_for_backup) == 1)
 check("Notification mentions the request id", f"#{req2_id}" in notes_for_old_owner[0]["message"])
 
 # Running auto_reassign_overdue again right away should NOT re-trigger anything,
@@ -93,7 +93,7 @@ reassigned_again = db.auto_reassign_overdue(TEST_DB)
 check("No duplicate reassignment on immediate re-check", not any(r["id"] == req2_id for r in reassigned_again))
 check(
     "No duplicate notifications on immediate re-check",
-    len(db.fetch_notifications(TEST_DB, recipient="Team Member B")) == 1,
+    len(db.fetch_notifications(TEST_DB, recipient="Mikko")) == 1,
 )
 
 # Even if the BACKUP also lets it sit past the timeout, it must not bounce
@@ -109,12 +109,12 @@ check("Request 2 (now with backup as owner) is overdue again", db.is_overdue(row
 
 reassigned_third_check = db.auto_reassign_overdue(TEST_DB)
 row2 = db.fetch_one(req2_id, TEST_DB)
-check("No ping-pong: request 2 does NOT bounce back to Team Member A", row2["owner"] == "Team Member B")
+check("No ping-pong: request 2 does NOT bounce back to Elina", row2["owner"] == "Mikko")
 check("No ping-pong: reassigned_count stays at 1", row2["reassigned_count"] == 1)
 check("No ping-pong: request 2 not reported as reassigned again", not any(r["id"] == req2_id for r in reassigned_third_check))
 check(
-    "No ping-pong: Team Member A doesn't get a second notification",
-    len(db.fetch_notifications(TEST_DB, recipient="Team Member A")) == 1,
+    "No ping-pong: Elina doesn't get a second notification",
+    len(db.fetch_notifications(TEST_DB, recipient="Elina")) == 1,
 )
 
 # --- insert_request requires an owner ---
