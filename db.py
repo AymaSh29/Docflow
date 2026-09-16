@@ -242,11 +242,21 @@ def auto_reassign_overdue(db_path=DB_PATH):
     nobody has it open. For this prototype that means: the moment anyone
     hits the app after the timeout has passed, the reassignment has already
     happened before they see the board.
+
+    This only fires ONCE per request (guarded by reassigned_count == 0).
+    Without that guard, if the backup also lets it sit past the timeout,
+    it would bounce back to the original owner, then back again,
+    indefinitely, re-firing notifications every cycle. Kostas's requirement
+    describes one handoff (owner -> named backup), not an infinite
+    ping-pong, so once a request has been handed to the backup, it just
+    stays flagged OVERDUE on the board if the backup doesn't act either.
     """
     reassigned = []
     for row in fetch_all(db_path):
         if row["stage"] != STAGE_RECEIVED or not is_overdue(row):
             continue
+        if row["reassigned_count"] > 0:
+            continue  # already handed off once - don't keep bouncing between the pair
 
         old_owner = row["owner"]
         backup = BACKUP_OF.get(old_owner)
