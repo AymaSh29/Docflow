@@ -55,7 +55,7 @@ row1 = db.fetch_one(req1_id, TEST_DB)
 check("Request 1 moves to Delivered", row1["stage"] == db.STAGE_DELIVERED)
 check("Request 1 has a delivered_at timestamp", row1["delivered_at"] is not None)
 
-# --- Request 2: sits unpicked past timeout -> flagged + reassigned ---
+# --- Request 2: sits unpicked past timeout -> auto-reassigned + both notified ---
 req2_id = db.insert_request("Kostas", "Invoice", "Q3 invoice batch", "Team Member A", 30, TEST_DB)
 
 conn = sqlite3.connect(TEST_DB)
@@ -66,13 +66,31 @@ conn.close()
 
 row2 = db.fetch_one(req2_id, TEST_DB)
 check("Request 2 (45 min old, 30 min timeout) is flagged overdue", db.is_overdue(row2))
+check("Team Member A's backup is Team Member B", db.BACKUP_OF["Team Member A"] == "Team Member B")
 
-db.reassign(req2_id, "Team Member B", TEST_DB)
+reassigned = db.auto_reassign_overdue(TEST_DB)
+check("auto_reassign_overdue reports request 2 as reassigned", any(r["id"] == req2_id for r in reassigned))
+
 row2 = db.fetch_one(req2_id, TEST_DB)
-check("Request 2 reassigned to Team Member B", row2["owner"] == "Team Member B")
+check("Request 2 auto-reassigned to its named backup (Team Member B)", row2["owner"] == "Team Member B")
 check("Request 2 reassigned_count incremented", row2["reassigned_count"] == 1)
 check("Request 2 no longer overdue right after reassignment", not db.is_overdue(row2))
 check("Request 2 still at Received after reassignment", row2["stage"] == db.STAGE_RECEIVED)
+
+notes_for_old_owner = db.fetch_notifications(TEST_DB, recipient="Team Member A")
+notes_for_backup = db.fetch_notifications(TEST_DB, recipient="Team Member B")
+check("Original owner (Team Member A) got a notification", len(notes_for_old_owner) == 1)
+check("Backup (Team Member B) got a notification", len(notes_for_backup) == 1)
+check("Notification mentions the request id", f"#{req2_id}" in notes_for_old_owner[0]["message"])
+
+# Running auto_reassign_overdue again right away should NOT re-trigger anything,
+# since the wait clock reset when it was reassigned.
+reassigned_again = db.auto_reassign_overdue(TEST_DB)
+check("No duplicate reassignment on immediate re-check", not any(r["id"] == req2_id for r in reassigned_again))
+check(
+    "No duplicate notifications on immediate re-check",
+    len(db.fetch_notifications(TEST_DB, recipient="Team Member B")) == 1,
+)
 
 # --- insert_request requires an owner ---
 try:
