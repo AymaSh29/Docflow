@@ -91,18 +91,25 @@ with tab_board:
     else:
         for row in rows:
             overdue = db.is_overdue(row)
+            was_reassigned = row["reassigned_count"] > 0
             with st.container(border=True):
                 header_col, stage_col = st.columns([4, 1])
                 with header_col:
+                    owner_display = f":orange[{row['owner']}]" if was_reassigned else row["owner"]
                     st.markdown(
                         f"**#{row['id']} - {row['document_type']}** requested by {row['requester_name']}, "
-                        f"owned by **{row['owner']}**"
+                        f"owned by **{owner_display}**"
                     )
+                    if was_reassigned:
+                        original_owner = db.BACKUP_OF.get(row["owner"], "someone else")
+                        st.markdown(f":orange[**\U0001F501 Auto-reassigned** from {original_owner}]")
                     if row["description"]:
                         st.caption(row["description"])
                 with stage_col:
                     if overdue:
                         st.error("OVERDUE")
+                    elif was_reassigned:
+                        st.warning(f"\U0001F501 {row['stage']}")
                     else:
                         st.write(f"**{row['stage']}**")
 
@@ -141,10 +148,7 @@ with tab_board:
                             st.rerun()
 
                 if row["reassigned_count"]:
-                    st.caption(
-                        f"Auto-reassigned {row['reassigned_count']} time(s) due to timeout "
-                        f"(backup for each owner: {db.BACKUP_OF.get(row['owner'], 'none configured')})"
-                    )
+                    st.caption(f"Auto-reassigned {row['reassigned_count']} time(s) due to timeout.")
 
 # --- Notifications tab ---
 with tab_notify:
